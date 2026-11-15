@@ -12,12 +12,16 @@ from app.schemas.data import (
     ContactCreate, ContactPatch, ContactRead, LessonCreate, LessonPatch,
     LessonRead, StudentCreate, StudentPatch, StudentRead,
 )
+from app.rag.embeddings import EmbeddingProvider
+from app.schemas.context import ContextRequest, ContextResponse
+from app.services.context import get_provider, index_lesson, locked_lesson, search_context
 from app.services.records import create_record, require_record, update_record
 
 router = APIRouter(prefix="/api")
 Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0)]
+Provider = Annotated[EmbeddingProvider, Depends(get_provider)]
 
 
 @router.get("/students", response_model=list[StudentRead], tags=["Students"])
@@ -103,9 +107,10 @@ async def list_lessons(
 
 
 @router.post("/students/{student_id}/lessons", response_model=LessonRead, status_code=201, tags=["Lessons"])
-async def create_lesson(student_id: UUID, data: LessonCreate, session: Session):
+async def create_lesson(student_id: UUID, data: LessonCreate, session: Session, provider: Provider):
     await require_record(session, Student, student_id)
-    return await create_record(session, Lesson, data, student_id=student_id)
+    lesson = await create_record(session, Lesson, data, student_id=student_id)
+    return await index_lesson(session, lesson, provider)
 
 
 @router.get("/lessons/{lesson_id}", response_model=LessonRead, tags=["Lessons"])
@@ -114,11 +119,28 @@ async def get_lesson(lesson_id: UUID, session: Session):
 
 
 @router.patch("/lessons/{lesson_id}", response_model=LessonRead, tags=["Lessons"])
-async def patch_lesson(lesson_id: UUID, data: LessonPatch, session: Session):
-    return await update_record(session, await require_record(session, Lesson, lesson_id), data)
+async def patch_lesson(lesson_id: UUID, data: LessonPatch, session: Session, provider: Provider):
+    lesson = await locked_lesson(session, lesson_id)
+    changed = any(getattr(lesson, key) != value for key, value in data.model_dump(exclude_unset=True).items()
+                  if key != "scheduled_at")
+    await update_record(session, lesson, data)
+    if changed:
+        await index_lesson(session, lesson, provider)
+    return lesson
 
 
 @router.delete("/lessons/{lesson_id}", status_code=204, tags=["Lessons"])
 async def delete_lesson(lesson_id: UUID, session: Session):
     await session.delete(await require_record(session, Lesson, lesson_id))
     return Response(status_code=204)
+
+
+@router.post("/lessons/{lesson_id}/index", response_model=LessonRead, tags=["Context"])
+async def reindex_lesson(lesson_id: UUID, session: Session, provider: Provider):
+    """Retry a failed index or rebuild for the configured model."""
+    return await index_lesson(session, await locked_lesson(session, lesson_id), provider)
+
+
+@router.post("/students/{student_id}/context/search", response_model=ContextResponse, tags=["Context"])
+async def context_search(student_id: UUID, data: ContextRequest, session: Session, provider: Provider):
+    return await search_context(session, student_id, data, provider)

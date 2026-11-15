@@ -1,4 +1,6 @@
 import asyncio
+
+import httpx
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.routes import router
+from app.rag.embeddings import build_provider
 from app.core.config import Settings, get_settings
 
 
@@ -21,10 +24,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connect_args={"timeout": 5, "command_timeout": 5},
         )
         app.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        try:
-            yield
-        finally:
-            await engine.dispose()
+        async with httpx.AsyncClient(timeout=config.embedding_timeout) as http_client:
+            app.state.embedding_provider = build_provider(config, http_client)
+            try:
+                yield
+            finally:
+                await engine.dispose()
 
     app = FastAPI(
         title=settings.app_name if settings else "Tutor RAG",

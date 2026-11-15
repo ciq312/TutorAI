@@ -1,11 +1,17 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     database_url: str
+    embedding_provider: Literal["gemini"] = "gemini"
+    embedding_model: str = Field(default="gemini-embedding-001", pattern=r"^[a-zA-Z0-9._-]+$")
+    embedding_dimensions: int = Field(default=768, ge=1, le=3072)
+    embedding_timeout: float = Field(default=30, gt=0, le=120)
+    gemini_api_key: SecretStr = SecretStr("")
     debug: bool = False
     app_name: str = "Tutor RAG"
 

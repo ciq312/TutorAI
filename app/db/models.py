@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import CheckConstraint, Integer, UniqueConstraint, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -42,6 +43,8 @@ class Lesson(Base):
         ForeignKey("students.id", ondelete="CASCADE")
     )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    indexing_status: Mapped[str] = mapped_column(String(16), server_default="pending")
+    indexing_error: Mapped[str | None] = mapped_column(String(100))
     topic: Mapped[str] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text)
     homework: Mapped[str | None] = mapped_column(Text)
@@ -49,3 +52,22 @@ class Lesson(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint("lesson_id", "position", name="uq_chunks_lesson_position"),
+        CheckConstraint("vector_dims(embedding) = dimensions", name="ck_chunks_dimensions"),
+        Index("ix_chunks_student_model", "student_id", "embedding_model", "dimensions"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    student_id: Mapped[UUID] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"))
+    lesson_id: Mapped[UUID] = mapped_column(ForeignKey("lessons.id", ondelete="CASCADE"))
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+    embedding_model: Mapped[str] = mapped_column(String(200))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    text_version: Mapped[str] = mapped_column(String(20))

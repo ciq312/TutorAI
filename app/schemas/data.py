@@ -79,6 +79,8 @@ class LessonPatch(Patch):
 
 
 class LessonRead(LessonCreate):
+    indexing_status: str
+    indexing_error: str | None
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     student_id: UUID

@@ -38,7 +38,7 @@ def database_url():
     # Always use a disposable database, never DATABASE_URL or TEST_DATABASE_URL.
     # The host port is assigned by Docker, so local PostgreSQL can keep port 5432.
     with PostgresContainer(
-        "postgres:17-alpine", username="tutor_test", password=secrets.token_hex(16),
+        "pgvector/pgvector:pg17", username="tutor_test", password=secrets.token_hex(16),
         dbname="tutor_test",
     ) as postgres:
         database_url = postgres.get_connection_url(driver="asyncpg")
@@ -57,6 +57,6 @@ def client(database_url):
             await engine.dispose()
 
     asyncio.run(clear())
-    with TestClient(create_app(Settings(database_url=database_url))) as client:
+    with TestClient(create_app(Settings(database_url=database_url, gemini_api_key=""))) as client:
         yield client
     asyncio.run(clear())
