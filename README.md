@@ -103,12 +103,28 @@ uvicorn app.main:app --reload
 ## Тесты
 
 ```bash
-pip install -r requirements-dev.txt
-createdb -h localhost -U tutor tutor_test
-TEST_DATABASE_URL=postgresql+asyncpg://tutor:change_me@localhost:5432/tutor_test pytest -q
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-Создайте отдельную тестовую базу с подходящими учётными данными. Имя обязательно должно начинаться с `tutor_test`: тесты откатывают миграции и очищают таблицы этой базы. Не используйте базу с рабочими данными. Без `TEST_DATABASE_URL` интеграционные тесты пропускаются.
+Нужен работающий Docker, доступный текущему пользователю (`docker info`). Testcontainers автоматически поднимает отдельную PostgreSQL 17 на свободном порту, применяет миграции и удаляет контейнер после прогона. Первый запуск скачивает Docker-образы.
+
+На Fedora с SELinux служебный контейнер очистки Ryuk может завершаться с `permission denied` при доступе к Docker-сокету. Для такой конфигурации:
+
+```bash
+TESTCONTAINERS_RYUK_PRIVILEGED=true python -m pytest -q
+```
+
+Этот параметр включает привилегированный режим только для Ryuk, а не для PostgreSQL.
+
+Контейнер общий для тестовой сессии, таблицы очищаются между тестами. Проверяются также откат миграций и соответствие схемы ORM-моделям. Рабочая база, `.env` и ранее заданная `TEST_DATABASE_URL` для подключения тестов не используются. Вручную создавать БД и запускать Compose не нужно. Если Docker недоступен, интеграционные тесты завершаются ошибкой, а не пропускаются.
+
+Для запуска одного теста:
+
+```bash
+python -m pytest tests/test_api.py::test_journal_and_partial_update -v
+```
 
 ## Данные и приватность
 
