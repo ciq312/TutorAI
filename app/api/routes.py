@@ -13,15 +13,23 @@ from app.schemas.data import (
     LessonRead, StudentCreate, StudentPatch, StudentRead,
 )
 from app.rag.embeddings import EmbeddingProvider
+from app.rag.llm import LLMProvider
 from app.schemas.context import ContextRequest, ContextResponse
 from app.services.context import get_provider, index_lesson, locked_lesson, search_context
 from app.services.records import create_record, require_record, update_record
+
+from app.schemas.materials import (
+    PlanRequest, PlanResponse, HomeworkRequest, HomeworkResponse,
+    FeedbackRequest, FeedbackResponse, AcceptHomework,
+)
+from app.services.materials import generate_material, get_llm
 
 router = APIRouter(prefix="/api")
 Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0)]
 Provider = Annotated[EmbeddingProvider, Depends(get_provider)]
+LLM = Annotated[LLMProvider, Depends(get_llm)]
 
 
 @router.get("/students", response_model=list[StudentRead], tags=["Students"])
@@ -144,3 +152,30 @@ async def reindex_lesson(lesson_id: UUID, session: Session, provider: Provider):
 @router.post("/students/{student_id}/context/search", response_model=ContextResponse, tags=["Context"])
 async def context_search(student_id: UUID, data: ContextRequest, session: Session, provider: Provider):
     return await search_context(session, student_id, data, provider)
+
+
+@router.post("/students/{student_id}/lesson-plan", response_model=PlanResponse, tags=["Materials"])
+async def lesson_plan(student_id: UUID, data: PlanRequest, session: Session, provider: Provider, llm: LLM):
+    return await generate_material(session, student_id, data, provider, llm, "plan")
+
+
+@router.post("/lessons/{lesson_id}/homework/draft", response_model=HomeworkResponse, tags=["Materials"])
+async def homework_draft(lesson_id: UUID, data: HomeworkRequest, session: Session, provider: Provider, llm: LLM):
+    lesson = await require_record(session, Lesson, lesson_id)
+    return await generate_material(session, lesson.student_id, data, provider, llm, "homework", lesson)
+
+
+@router.put("/lessons/{lesson_id}/homework", response_model=LessonRead, tags=["Materials"])
+async def accept_homework(lesson_id: UUID, data: AcceptHomework, session: Session, provider: Provider):
+    """Save the tutor-reviewed text as assigned homework and refresh its index."""
+    lesson = await locked_lesson(session, lesson_id)
+    if lesson.homework != data.homework:
+        lesson.homework = data.homework
+        await index_lesson(session, lesson, provider)
+    return lesson
+
+
+@router.post("/lessons/{lesson_id}/feedback/draft", response_model=FeedbackResponse, tags=["Materials"])
+async def feedback_draft(lesson_id: UUID, data: FeedbackRequest, session: Session, provider: Provider, llm: LLM):
+    lesson = await require_record(session, Lesson, lesson_id)
+    return await generate_material(session, lesson.student_id, data, provider, llm, "feedback", lesson)

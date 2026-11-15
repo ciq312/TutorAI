@@ -8,8 +8,14 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       EMBEDDING_TIMEOUT: ${EMBEDDING_TIMEOUT:-30}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tutor}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-tutor_rag}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy

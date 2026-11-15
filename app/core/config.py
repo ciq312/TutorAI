@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=768, ge=1, le=3072)
     embedding_timeout: float = Field(default=30, gt=0, le=120)
     gemini_api_key: SecretStr = SecretStr("")
+    llm_provider: Literal["gemini", "ollama"] = "gemini"
+    llm_model: str = Field(default="gemini-3.8-flash", pattern=r"^[a-zA-Z0-9._:-]+$")
+    llm_timeout: float = Field(default=180, gt=0, le=300)
+    ollama_base_url: str = "http://localhost:11434"
     debug: bool = False
     app_name: str = "Tutor RAG"
 

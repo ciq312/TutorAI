@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.routes import router
 from app.rag.embeddings import build_provider
+from app.rag.llm import build_llm
 from app.core.config import Settings, get_settings
 
 
@@ -24,7 +25,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connect_args={"timeout": 5, "command_timeout": 5},
         )
         app.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        async with httpx.AsyncClient(timeout=config.embedding_timeout) as http_client:
+        async with (
+            httpx.AsyncClient(timeout=config.embedding_timeout) as http_client,
+            httpx.AsyncClient(timeout=config.llm_timeout) as llm_client,
+        ):
+            app.state.llm_provider = build_llm(config, llm_client)
             app.state.embedding_provider = build_provider(config, http_client)
             try:
                 yield
