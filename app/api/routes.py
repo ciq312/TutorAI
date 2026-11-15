@@ -1,0 +1,124 @@
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import AwareDatetime
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import Contact, Lesson, Student
+from app.db.session import get_session
+from app.schemas.data import (
+    ContactCreate, ContactPatch, ContactRead, LessonCreate, LessonPatch,
+    LessonRead, StudentCreate, StudentPatch, StudentRead,
+)
+from app.services.records import create_record, require_record, update_record
+
+router = APIRouter(prefix="/api")
+Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
+Limit = Annotated[int, Query(ge=1, le=100)]
+Offset = Annotated[int, Query(ge=0)]
+
+
+@router.get("/students", response_model=list[StudentRead], tags=["Students"])
+async def list_students(session: Session, limit: Limit = 50, offset: Offset = 0):
+    result = await session.scalars(
+        select(Student).order_by(Student.created_at.desc(), Student.id.desc())
+        .limit(limit).offset(offset)
+    )
+    return result.all()
+
+
+@router.post("/students", response_model=StudentRead, status_code=201, tags=["Students"])
+async def create_student(data: StudentCreate, session: Session):
+    return await create_record(session, Student, data)
+
+
+@router.get("/students/{student_id}", response_model=StudentRead, tags=["Students"])
+async def get_student(student_id: UUID, session: Session):
+    return await require_record(session, Student, student_id)
+
+
+@router.patch("/students/{student_id}", response_model=StudentRead, tags=["Students"])
+async def patch_student(student_id: UUID, data: StudentPatch, session: Session):
+    return await update_record(session, await require_record(session, Student, student_id), data)
+
+
+@router.delete("/students/{student_id}", status_code=204, tags=["Students"])
+async def delete_student(student_id: UUID, session: Session):
+    await session.delete(await require_record(session, Student, student_id))
+    return Response(status_code=204)
+
+
+@router.get("/students/{student_id}/contacts", response_model=list[ContactRead], tags=["Contacts"])
+async def list_contacts(student_id: UUID, session: Session, limit: Limit = 50, offset: Offset = 0):
+    await require_record(session, Student, student_id)
+    result = await session.scalars(
+        select(Contact).where(Contact.student_id == student_id)
+        .order_by(Contact.name, Contact.id).limit(limit).offset(offset)
+    )
+    return result.all()
+
+
+@router.post("/students/{student_id}/contacts", response_model=ContactRead, status_code=201, tags=["Contacts"])
+async def create_contact(student_id: UUID, data: ContactCreate, session: Session):
+    await require_record(session, Student, student_id)
+    return await create_record(session, Contact, data, student_id=student_id)
+
+
+@router.get("/contacts/{contact_id}", response_model=ContactRead, tags=["Contacts"])
+async def get_contact(contact_id: UUID, session: Session):
+    return await require_record(session, Contact, contact_id)
+
+
+@router.patch("/contacts/{contact_id}", response_model=ContactRead, tags=["Contacts"])
+async def patch_contact(contact_id: UUID, data: ContactPatch, session: Session):
+    return await update_record(session, await require_record(session, Contact, contact_id), data)
+
+
+@router.delete("/contacts/{contact_id}", status_code=204, tags=["Contacts"])
+async def delete_contact(contact_id: UUID, session: Session):
+    await session.delete(await require_record(session, Contact, contact_id))
+    return Response(status_code=204)
+
+
+@router.get("/students/{student_id}/lessons", response_model=list[LessonRead], tags=["Lessons"])
+async def list_lessons(
+    student_id: UUID, session: Session, limit: Limit = 50, offset: Offset = 0,
+    date_from: AwareDatetime | None = None, date_to: AwareDatetime | None = None,
+):
+    """Newest first. Date bounds are inclusive and must include a timezone."""
+    await require_record(session, Student, student_id)
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must not be after date_to")
+    query = select(Lesson).where(Lesson.student_id == student_id)
+    if date_from is not None:
+        query = query.where(Lesson.scheduled_at >= date_from)
+    if date_to is not None:
+        query = query.where(Lesson.scheduled_at <= date_to)
+    result = await session.scalars(
+        query.order_by(Lesson.scheduled_at.desc(), Lesson.id.desc()).limit(limit).offset(offset)
+    )
+    return result.all()
+
+
+@router.post("/students/{student_id}/lessons", response_model=LessonRead, status_code=201, tags=["Lessons"])
+async def create_lesson(student_id: UUID, data: LessonCreate, session: Session):
+    await require_record(session, Student, student_id)
+    return await create_record(session, Lesson, data, student_id=student_id)
+
+
+@router.get("/lessons/{lesson_id}", response_model=LessonRead, tags=["Lessons"])
+async def get_lesson(lesson_id: UUID, session: Session):
+    return await require_record(session, Lesson, lesson_id)
+
+
+@router.patch("/lessons/{lesson_id}", response_model=LessonRead, tags=["Lessons"])
+async def patch_lesson(lesson_id: UUID, data: LessonPatch, session: Session):
+    return await update_record(session, await require_record(session, Lesson, lesson_id), data)
+
+
+@router.delete("/lessons/{lesson_id}", status_code=204, tags=["Lessons"])
+async def delete_lesson(lesson_id: UUID, session: Session):
+    await session.delete(await require_record(session, Lesson, lesson_id))
+    return Response(status_code=204)
