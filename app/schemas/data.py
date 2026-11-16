@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -20,7 +20,7 @@ class Patch(Input):
     @model_validator(mode="after")
     def reject_null_required_fields(self):
         # Omitted fields stay unchanged; null only clears optional fields.
-        for key in self.model_fields_set & {"name", "phone", "topic", "scheduled_at"}:
+        for key in self.model_fields_set & {"name", "phone", "topic", "scheduled_at", "status", "duration_minutes", "preparation_minutes", "materials", "notifications_enabled", "homework_status"}:
             if getattr(self, key) is None:
                 raise ValueError(f"{key} cannot be null")
         return self
@@ -62,7 +62,38 @@ class ContactRead(ContactCreate):
     student_id: UUID
 
 
+class StoredSource(Input):
+    lesson_id: Annotated[str, StringConstraints(max_length=100)]
+    scheduled_at: Annotated[str, StringConstraints(max_length=100)]
+    excerpts: list[Note] = Field(default_factory=list, max_length=20)
+
+
+class LessonDraft(Input):
+    knowledge_sources: list[dict] = Field(default_factory=list, max_length=10)
+    missing_data: list[Note] = Field(default_factory=list, max_length=20)
+    warnings: list[Grade] = Field(default_factory=list, max_length=20)
+    text: Note = ""
+    brief: Note = ""
+    answers: Note = ""
+    sources: list[StoredSource] = Field(default_factory=list, max_length=20)
+
+
+class LessonMaterials(Input):
+    plan: LessonDraft | None = None
+    homework: LessonDraft | None = None
+    feedback: LessonDraft | None = None
+    next_plan: LessonDraft | None = None
+    next_topic: Topic | None = None
+    results: dict | None = None
+
+
 class LessonCreate(Input):
+    notifications_enabled: bool = True
+    homework_status: Literal["unknown", "done", "partial", "not_done"] = "unknown"
+    status: Literal["scheduled", "completed", "cancelled"] = "scheduled"
+    duration_minutes: int = Field(default=60, ge=10, le=240)
+    preparation_minutes: int = Field(default=30, ge=0, le=10080)
+    materials: LessonMaterials = Field(default_factory=LessonMaterials)
     scheduled_at: AwareDatetime
     topic: Topic
     notes: Note | None = None
@@ -71,6 +102,12 @@ class LessonCreate(Input):
 
 
 class LessonPatch(Patch):
+    notifications_enabled: bool | None = None
+    homework_status: Literal["unknown", "done", "partial", "not_done"] | None = None
+    status: Literal["scheduled", "completed", "cancelled"] | None = None
+    duration_minutes: int | None = Field(default=None, ge=10, le=240)
+    preparation_minutes: int | None = Field(default=None, ge=0, le=10080)
+    materials: LessonMaterials | None = None
     scheduled_at: AwareDatetime | None = None
     topic: Topic | None = None
     notes: Note | None = None

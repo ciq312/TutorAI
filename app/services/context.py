@@ -55,7 +55,7 @@ async def locked_lesson(session: AsyncSession, lesson_id: UUID) -> Lesson:
 async def search_context(session: AsyncSession, student_id: UUID, data: ContextRequest,
                          provider: EmbeddingProvider) -> dict:
     student = await require_record(session, Student, student_id)
-    lessons = select(Lesson).where(Lesson.student_id == student_id)
+    lessons = select(Lesson).where(Lesson.student_id == student_id, Lesson.status != "cancelled")
     if data.date_from is not None:
         lessons = lessons.where(Lesson.scheduled_at >= data.date_from)
     if data.date_to is not None:

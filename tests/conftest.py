@@ -52,7 +52,7 @@ def client(database_url):
         engine = create_async_engine(database_url)
         try:
             async with engine.begin() as connection:
-                await connection.execute(text("TRUNCATE students CASCADE"))
+                await connection.execute(text("TRUNCATE students, integration_state, calendar_events, knowledge_documents CASCADE"))
         finally:
             await engine.dispose()
 

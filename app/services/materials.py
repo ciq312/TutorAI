@@ -1,6 +1,7 @@
 """Build bounded, anonymized context and validate source references."""
 import json
 import re
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException, Request
@@ -12,7 +13,8 @@ from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMError, LLMProvider
 from app.rag.text import lesson_text
 from app.schemas.context import ContextRequest
-from app.schemas.materials import PlanContent, HomeworkContent, FeedbackContent
+from app.schemas.materials import PlanContent, HomeworkContent, FeedbackContent, ResultsContent
+from app.services.knowledge import teaching_context
 from app.services.context import search_context
 from app.services.privacy import student_anonymizer
 from app.services.records import require_record
@@ -31,6 +33,16 @@ SYSTEM = """Ты помощник репетитора. Ответ на русс
 упражнения и минуты, сумма равна duration_minutes. Для homework: упражнения от простого
 к сложному на заданное время; teacher_answers пуст, если include_answers=false.
 Для feedback: короткое сообщение выбранному адресату, без неподтверждённого прогресса.
+Для results: summary — краткие итоги только по заметкам выбранного занятия;
+homework и teacher_answers — предложенное ДЗ и решения для преподавателя;
+next_topic и next_plan — предложение следующего урока с минутами, учитывая КТП и трудности;
+brief — короткая памятка для следующего занятия, включая предложенное ДЗ.
+Никогда не помещай решения или ответы к заданиям в brief, summary, homework или next_plan;
+они допустимы только в teacher_answers.
+curriculum — проверенная последовательность КТП, а не доказательство освоения тем.
+Если КТП отсутствует, явно укажи это. Не считай следующую тему автоматически освоенной.
+document_sources — материалы библиотеки, цитируй их как [К1], [К2] с номером страницы.
+Не включай их в facts об ученике. Сгенерированные упражнения явно обозначай.
 """
 
 
@@ -46,7 +58,7 @@ async def generate_material(session: AsyncSession, student_id: UUID, data,
     request_data = data.model_dump()
     query = data.topic if kind == "plan" else f"{lesson.topic}. {data.instructions}"
     context = await search_context(session, student_id, ContextRequest(
-        query=query[:2000], date_to=lesson.scheduled_at if lesson else None,
+        query=query[:2000], date_to=lesson.scheduled_at if lesson else datetime.now(timezone.utc),
     ), embeddings)
     if lesson is not None:
         # The selected lesson always precedes retrieved history, even when old.
@@ -68,8 +80,10 @@ async def generate_material(session: AsyncSession, student_id: UUID, data,
             bounded.append({**source, "excerpts": [anonymizer.prepare(text[:remaining])]})
             remaining -= min(len(text), remaining)
     sources = bounded
-    schema = {"plan": PlanContent, "homework": HomeworkContent, "feedback": FeedbackContent}[kind]
-    if not sources:
+    knowledge_sources, curriculum, knowledge_warnings = await teaching_context(session, student_id, query, embeddings)
+    schema = {"plan": PlanContent, "homework": HomeworkContent, "feedback": FeedbackContent,
+              "results": ResultsContent}[kind]
+    if not sources and not knowledge_sources and not curriculum:
         # No history: return an honest empty-data draft without consuming quota.
         return {"student_id": student_id, "sources": [], "warnings": context["warnings"],
                 "facts": [], "missing_data": ["Нет записей занятий. Добавьте учебную историю."],
@@ -77,7 +91,10 @@ async def generate_material(session: AsyncSession, student_id: UUID, data,
                 "plan": "Добавьте занятие для подготовки персонального плана."}
     payload = {"scenario": kind, "request": request_data,
                "profile": {"grade": (student.grade or "")[:100], "goals": (student.goals or "")[:3000]},
-               "sources": [{"number": i, "text": "\n".join(s["excerpts"])} for i, s in enumerate(sources, 1)]}
+               "sources": [{"number": i, "text": "\n".join(s["excerpts"])} for i, s in enumerate(sources, 1)],
+               "curriculum": {k: v for k, v in curriculum.items() if k != 'document_id'} if curriculum else None,
+               "document_sources": [{"number": i, "title": s['title'], "page": s['page'], "text": s['text']}
+                                    for i, s in enumerate(knowledge_sources, 1)]}
     prompt = anonymizer.prepare(json.dumps(payload, ensure_ascii=False))
     try:
         result = await llm.generate(SYSTEM, prompt, schema)
@@ -88,6 +105,8 @@ async def generate_material(session: AsyncSession, student_id: UUID, data,
         for text in output_texts(result.model_dump()):
             if any(int(n) < 1 or int(n) > len(sources) for n in re.findall(r"\[(\d+)\]", text)):
                 raise LLMError("invalid_sources")
+            if any(int(n) < 1 or int(n) > len(knowledge_sources) for n in re.findall(r"\[К(\d+)\]", text)):
+                raise LLMError("invalid_sources")
     except ValidationError:
         raise HTTPException(502, detail={"code": "invalid_response"}) from None
     except LLMError as exc:
@@ -96,8 +115,8 @@ async def generate_material(session: AsyncSession, student_id: UUID, data,
     output = result.model_dump()
     if kind == "homework" and not data.include_answers:
         output["teacher_answers"] = ""
-    return {**output, "student_id": student_id, "sources": sources,
-            "warnings": list(dict.fromkeys([*context["warnings"], "tutor_review_required"]))}
+    return {**output, "student_id": student_id, "sources": sources, "knowledge_sources": knowledge_sources,
+            "warnings": list(dict.fromkeys([*context["warnings"], *knowledge_warnings, "tutor_review_required"]))}
 
 
 def output_texts(value):

@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     debug: bool = False
     app_name: str = "Tutor RAG"
+    google_client_id: str = ""
+    google_client_secret: SecretStr = SecretStr("")
+    google_redirect_uri: str = "http://localhost:8000/api/integrations/google/callback"
+    integration_encryption_key: SecretStr = SecretStr("")
+    telegram_bot_token: SecretStr = SecretStr("")
+    public_app_url: str = "http://localhost:5173"
+    worker_interval_seconds: int = Field(default=30, ge=5, le=300)
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

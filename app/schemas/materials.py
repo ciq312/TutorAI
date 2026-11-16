@@ -6,9 +6,11 @@ from pydantic import Field
 
 from app.schemas.data import Input, Topic, Note
 from app.schemas.context import ContextSource
+from app.schemas.knowledge import KnowledgeSource
 
 
 class PlanRequest(Input):
+    instructions: Topic | None = None
     topic: Topic
     duration_minutes: int = Field(default=60, ge=10, le=240)
 
@@ -52,18 +54,45 @@ class PlanResponse(PlanContent):
     student_id: UUID
     sources: list[ContextSource]
     warnings: list[str]
+    knowledge_sources: list[KnowledgeSource] = Field(default_factory=list)
 
 
 class HomeworkResponse(HomeworkContent):
     student_id: UUID
     sources: list[ContextSource]
     warnings: list[str]
+    knowledge_sources: list[KnowledgeSource] = Field(default_factory=list)
 
 
 class FeedbackResponse(FeedbackContent):
     student_id: UUID
     sources: list[ContextSource]
     warnings: list[str]
+    knowledge_sources: list[KnowledgeSource] = Field(default_factory=list)
+
+
+class ResultsContent(GeneratedMaterial):
+    summary: str = Field(min_length=1, max_length=10000)
+    homework: str = Field(min_length=1, max_length=20000)
+    teacher_answers: str = Field(max_length=20000)
+    next_topic: str = Field(min_length=1, max_length=500)
+    next_plan: str = Field(min_length=1, max_length=16000)
+    brief: str = Field(min_length=1, max_length=10000)
+
+
+class ResultsRequest(Input):
+    instructions: Topic = "Подготовь итоги, ДЗ и следующий урок по КТП и результатам занятия"
+    duration_minutes: int = Field(default=60, ge=10, le=240)
+
+
+class ResultsReview(Input):
+    version: UUID
+    summary: Note = Field(min_length=1)
+    homework: Note = Field(min_length=1)
+    teacher_answers: Note = ""
+    next_topic: Topic
+    next_plan: Note = Field(min_length=1)
+    brief: Note = Field(min_length=1)
 
 
 class AcceptHomework(Input):

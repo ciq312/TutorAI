@@ -23,6 +23,10 @@ from app.schemas.materials import (
     FeedbackRequest, FeedbackResponse, AcceptHomework,
 )
 from app.services.materials import generate_material, get_llm
+from app.schemas.chat import ChatRequest, ChatResponse
+from app.services.chat import answer_chat
+from app.schemas.materials import ResultsRequest, ResultsReview
+from app.services.results import generate_results, accept_results
 
 router = APIRouter(prefix="/api")
 Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
@@ -130,9 +134,11 @@ async def get_lesson(lesson_id: UUID, session: Session):
 async def patch_lesson(lesson_id: UUID, data: LessonPatch, session: Session, provider: Provider):
     lesson = await locked_lesson(session, lesson_id)
     changed = any(getattr(lesson, key) != value for key, value in data.model_dump(exclude_unset=True).items()
-                  if key != "scheduled_at")
+                  if key in {"topic", "notes", "homework", "difficulties"})
     await update_record(session, lesson, data)
     if changed:
+        if lesson.materials.get('results'):
+            lesson.materials = {**lesson.materials, 'results': {**lesson.materials['results'], 'approved': False}}
         await index_lesson(session, lesson, provider)
     return lesson
 
@@ -171,6 +177,9 @@ async def accept_homework(lesson_id: UUID, data: AcceptHomework, session: Sessio
     lesson = await locked_lesson(session, lesson_id)
     if lesson.homework != data.homework:
         lesson.homework = data.homework
+        lesson.homework_status = 'unknown'
+        if lesson.materials.get('results'):
+            lesson.materials = {**lesson.materials, 'results': {**lesson.materials['results'], 'approved': False}}
         await index_lesson(session, lesson, provider)
     return lesson
 
@@ -179,3 +188,20 @@ async def accept_homework(lesson_id: UUID, data: AcceptHomework, session: Sessio
 async def feedback_draft(lesson_id: UUID, data: FeedbackRequest, session: Session, provider: Provider, llm: LLM):
     lesson = await require_record(session, Lesson, lesson_id)
     return await generate_material(session, lesson.student_id, data, provider, llm, "feedback", lesson)
+
+
+@router.post("/students/{student_id}/chat", response_model=ChatResponse, tags=["Chat"])
+async def chat(student_id: UUID, data: ChatRequest, session: Session, provider: Provider, llm: LLM):
+    return await answer_chat(session, student_id, data, provider, llm)
+
+
+@router.post('/lessons/{lesson_id}/results/draft', tags=['Materials'])
+async def results_draft(lesson_id: UUID, data: ResultsRequest, session: Session, provider: Provider, llm: LLM):
+    return await generate_results(session, await locked_lesson(session, lesson_id), data, provider, llm)
+
+
+@router.put('/lessons/{lesson_id}/results', response_model=LessonRead, tags=['Materials'])
+async def review_results(lesson_id: UUID, data: ResultsReview, session: Session, provider: Provider):
+    lesson = await locked_lesson(session, lesson_id)
+    accept_results(lesson, data)
+    return await index_lesson(session, lesson, provider)
